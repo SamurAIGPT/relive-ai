@@ -1,7 +1,8 @@
 import { Inter } from "next/font/google";
-import NextAuthSessionProvider from "@/components/SessionProvider";
-import Header from "@/components/Header";
 import "./globals.css";
+import { Providers } from "./providers";
+import Navbar from "../components/Navbar";
+import config from "@/lib/config";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -17,22 +18,26 @@ export const metadata = {
 };
 
 export default function RootLayout({ children }) {
+  const theme = config?.theme || "slate-indigo";
+
   return (
     <html
       lang="en"
       className={`${inter.variable} h-full antialiased`}
+      data-theme={theme}
     >
       <head>
         <link rel="icon" href="/favicon.ico" />
       </head>
-      <body className="min-h-full flex flex-col bg-[#0b0c10] text-[#c5c6c7] font-sans selection:bg-[#4e4e50] selection:text-[#66fcf1]">
-        <NextAuthSessionProvider>
-          <Header />
-          <main className="flex-1 flex flex-col min-h-0 relative">
+      <body className="min-h-full flex flex-col bg-bg-page text-primary-text font-sans overflow-hidden">
+        <Providers>
+          <Navbar />
+          <div className="flex-1 flex flex-col overflow-hidden min-h-0">
             {children}
-          </main>
-        </NextAuthSessionProvider>
+          </div>
+        </Providers>
       </body>
     </html>
   );
 }
+

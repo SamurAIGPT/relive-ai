@@ -1,75 +1,53 @@
-import stripe from "../stripe";
+import { stripe } from "../stripe";
 import config from "../config";
-import { addCredits } from "./user";
+import { UserService } from "./user";
 
-/**
- * Create a Stripe checkout session for credit pack purchases.
- */
-export async function createCheckoutSession(userId, planId, userEmail) {
-  const plan = config.stripe.plans[planId];
-  if (!plan) {
-    throw new Error(`Plan not found: ${planId}`);
-  }
+export const BillingService = {
+  async createCheckoutSession(userId, planId) {
+    const plan = config.stripe.plans[planId];
+    if (!plan) throw new Error("Invalid plan selected");
 
-  const session = await stripe.checkout.sessions.create({
-    payment_method_types: ["card"],
-    line_items: [
-      {
-        price_data: {
-          currency: "usd",
-          product_data: {
-            name: plan.name,
-            description: `Purchase ${plan.credits} generation credits for Relive AI`,
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "usd",
+            product_data: {
+              name: `${config.stripe.plans[planId].name}`,
+              description: `Purchase ${plan.credits} credits to perform AI generations.`,
+            },
+            unit_amount: plan.price,
           },
-          unit_amount: plan.price,
+          quantity: 1,
         },
-        quantity: 1,
-      },
-    ],
-    mode: "payment",
-    metadata: {
-      userId,
-      planId,
-      credits: plan.credits.toString(),
-    },
-    customer_email: userEmail,
-    success_url: `${config.auth.url}/gallery?success=true`,
-    cancel_url: `${config.auth.url}/pricing?canceled=true`,
-  });
+      ],
+      mode: "payment",
+      success_url: `${config.auth.url}/pricing?success=true`,
+      cancel_url: `${config.auth.url}/pricing?canceled=true`,
+      metadata: { userId, credits: plan.credits.toString() },
+    });
 
-  return session;
-}
+    return session.url;
+  },
 
-/**
- * Handle Stripe webhook events.
- */
-export async function handleStripeWebhook(signature, rawBody) {
-  let event;
+  async handleWebhook(body, signature) {
+    const event = stripe.webhooks.constructEvent(body, signature, config.stripe.webhookSecret);
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+      const userId = session.metadata.userId;
+      const credits = parseInt(session.metadata.credits || "0", 10);
 
-  try {
-    event = stripe.webhooks.constructEvent(
-      rawBody,
-      signature,
-      config.stripe.webhookSecret || ""
-    );
-  } catch (err) {
-    console.error(`[BILLING SERVICE] Webhook signature verification failed:`, err.message);
-    throw new Error(`Webhook Error: ${err.message}`);
-  }
-
-  if (event.type === "checkout.session.completed") {
-    const session = event.data.object;
-    const userId = session.metadata?.userId;
-    const creditsStr = session.metadata?.credits;
-
-    if (userId && creditsStr) {
-      const credits = parseInt(creditsStr, 10);
-      console.log(`[BILLING SERVICE] Payment successful. Crediting user ${userId} with ${credits} credits.`);
-      await addCredits(userId, credits);
-    } else {
-      console.warn(`[BILLING SERVICE] Session completed but metadata is missing:`, session.metadata);
+      if (userId && credits > 0) {
+        await UserService.addCredits(userId, credits);
+        return { success: true, userId, credits };
+      }
     }
+    return { success: false };
   }
+};
 
-  return { received: true };
-}
+export const createCheckoutSession = BillingService.createCheckoutSession.bind(BillingService);
+export const handleWebhook = BillingService.handleWebhook.bind(BillingService);
+export default BillingService;
+

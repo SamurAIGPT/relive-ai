@@ -3,6 +3,7 @@
  * Contains auth options, stripe configuration, and AI model parameters.
  */
 const config = {
+  appName: "Relive Ai",
   auth: {
     google: {
       clientId: process.env.GOOGLE_CLIENT_ID,

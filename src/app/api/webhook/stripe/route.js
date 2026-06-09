@@ -1,23 +1,21 @@
 import { NextResponse } from "next/server";
-import { handleStripeWebhook } from "@/lib/services/billing";
+import { headers } from "next/headers";
+import { BillingService } from "@/lib/services/billing";
 
 export async function POST(req) {
-  const sig = req.headers.get("stripe-signature");
-
-  if (!sig) {
-    return NextResponse.json({ error: "Missing stripe-signature header" }, { status: 400 });
-  }
-
   try {
-    // Read raw request body as text for verification
-    const rawBody = await req.text();
-    const result = await handleStripeWebhook(sig, rawBody);
+    const body = await req.text();
+    const headersList = await headers();
+    const signature = headersList.get("stripe-signature");
+
+    if (!signature) {
+      return NextResponse.json({ error: "Missing stripe-signature header" }, { status: 400 });
+    }
+
+    const result = await BillingService.handleWebhook(body, signature);
     return NextResponse.json(result);
   } catch (error) {
-    console.error("[STRIPE WEBHOOK API] Processing error:", error);
-    return NextResponse.json({ error: error.message }, { status: 400 });
+    console.error("Stripe webhook processing error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
-
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
