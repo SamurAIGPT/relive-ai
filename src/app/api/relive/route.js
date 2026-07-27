@@ -21,13 +21,16 @@ export async function POST(req) {
       return NextResponse.json({ error: "prompt is required." }, { status: 400 });
     }
 
+    const headerApiKey = req.headers.get("x-custom-api-key");
+    const customApiKey = headerApiKey || body.customApiKey || session.user.customApiKey || null;
+
     const creation = await submitGeneration(session.user.id, modelKey, {
       prompt,
       imageUrl,
       aspectRatio,
       duration,
       resolution,
-    });
+    }, customApiKey);
 
     return NextResponse.json({ success: true, creation });
   } catch (error) {

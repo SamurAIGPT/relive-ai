@@ -24,7 +24,7 @@ export function getGenerationCost(modelKey, params) {
 /**
  * Submit an AI video generation request to MuAPI.
  */
-export async function submitGeneration(userId, modelKey, params) {
+export async function submitGeneration(userId, modelKey, params, customApiKey = null) {
   if (!userId) {
     throw new Error("Authentication required.");
   }
@@ -39,13 +39,15 @@ export async function submitGeneration(userId, modelKey, params) {
     throw new Error("A prompt is required for video generation.");
   }
 
-  // Calculate dynamic credit cost based on user inputs
-  const cost = getGenerationCost(modelKey, { duration, resolution });
+  const isUsingCustomKey = Boolean(customApiKey && customApiKey.trim().length > 0);
+  const cost = isUsingCustomKey ? 0 : getGenerationCost(modelKey, { duration, resolution });
 
-  // Deduct credits first
-  const deducted = await deductCredits(userId, cost);
-  if (!deducted) {
-    throw new Error("Insufficient credits. Please purchase a credit pack.");
+  // Deduct credits first if not using custom key
+  if (!isUsingCustomKey && cost > 0) {
+    const deducted = await deductCredits(userId, cost);
+    if (!deducted) {
+      throw new Error("Insufficient credits. Please purchase a credit pack.");
+    }
   }
 
   // Build payload based on model input specifications
@@ -57,8 +59,10 @@ export async function submitGeneration(userId, modelKey, params) {
   // Add model specific parameters
   if (model.type === "i2v") {
     if (!imageUrl) {
-      // Refund credits if imageUrl is missing
-      await addCredits(userId, cost);
+      // Refund credits if imageUrl is missing and was deducted
+      if (!isUsingCustomKey && cost > 0) {
+        await addCredits(userId, cost);
+      }
       throw new Error("Start frame image is required for Image-to-Video models.");
     }
     payload.images_list = [imageUrl];
@@ -71,6 +75,8 @@ export async function submitGeneration(userId, modelKey, params) {
     }
   }
 
+  const apiKey = isUsingCustomKey ? customApiKey.trim() : (config.ai.apiKey || "");
+
   try {
     const webhookUrl = `${config.auth.webhook_url}/api/webhook/muapi`;
     const apiUrl = `https://api.muapi.ai/api/v1/${model.endpoint}?webhook=${encodeURIComponent(webhookUrl)}`;
@@ -81,7 +87,7 @@ export async function submitGeneration(userId, modelKey, params) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": config.ai.apiKey || "",
+        "x-api-key": apiKey,
       },
       body: JSON.stringify(payload),
     });
@@ -108,7 +114,7 @@ export async function submitGeneration(userId, modelKey, params) {
         imageUrl: imageUrl || null,
         aspectRatio,
         resolution: modelKey.includes("pro") ? resolution : null,
-        duration: model.family === "sora" ? parseInt(duration, 10) : 8, // Veo default is 8s according to pricing rules
+        duration: model.family === "sora" ? parseInt(duration, 10) : 8,
         modelFamily: model.family,
         modelVariant: modelKey,
         status: "processing",
@@ -121,9 +127,11 @@ export async function submitGeneration(userId, modelKey, params) {
     return creation;
   } catch (error) {
     console.error("[AI SERVICE] Generation submission error:", error);
-    // Refund credits to the user
-    console.log(`[AI SERVICE] Refunding ${cost} credits to user ${userId} due to submission error.`);
-    await addCredits(userId, cost);
+    // Refund credits to the user if deducted
+    if (!isUsingCustomKey && cost > 0) {
+      console.log(`[AI SERVICE] Refunding ${cost} credits to user ${userId} due to submission error.`);
+      await addCredits(userId, cost);
+    }
     throw error;
   }
 }
@@ -131,7 +139,7 @@ export async function submitGeneration(userId, modelKey, params) {
 /**
  * Polls the current status of a generation task from MuAPI and updates the database.
  */
-export async function checkAndUpdateStatus(requestId) {
+export async function checkAndUpdateStatus(requestId, customApiKey = null) {
   if (!requestId) return null;
 
   const creation = await prisma.reliveCreation.findUnique({
@@ -148,12 +156,15 @@ export async function checkAndUpdateStatus(requestId) {
     return creation;
   }
 
+  const isUsingCustomKey = Boolean(customApiKey && customApiKey.trim().length > 0);
+  const apiKey = isUsingCustomKey ? customApiKey.trim() : (config.ai.apiKey || "");
+
   try {
     const pollUrl = `https://api.muapi.ai/api/v1/predictions/${requestId}/result`;
     const response = await fetch(pollUrl, {
       method: "GET",
       headers: {
-        "x-api-key": config.ai.apiKey || "",
+        "x-api-key": apiKey,
       },
     });
 
@@ -170,7 +181,6 @@ export async function checkAndUpdateStatus(requestId) {
 
     if (status === "completed") {
       // Find output video URL
-      // support: result.video?.url, result.outputs?.[0], result.data?.outputs?.[0]
       const videoUrl = result.video?.url || result.outputs?.[0] || result.data?.outputs?.[0] || result.data?.video?.url;
 
       if (!videoUrl) {
@@ -188,13 +198,14 @@ export async function checkAndUpdateStatus(requestId) {
         },
       });
     } else if (status === "failed") {
-      // Refund credits dynamically
-      const cost = getGenerationCost(creation.modelVariant, {
-        duration: creation.duration,
-        resolution: creation.resolution,
-      });
-      console.log(`[AI SERVICE] Task ${requestId} failed. Refunding ${cost} credits to user ${creation.userId}.`);
-      await addCredits(creation.userId, cost);
+      if (!isUsingCustomKey) {
+        const cost = getGenerationCost(creation.modelVariant, {
+          duration: creation.duration,
+          resolution: creation.resolution,
+        });
+        console.log(`[AI SERVICE] Task ${requestId} failed. Refunding ${cost} credits to user ${creation.userId}.`);
+        await addCredits(creation.userId, cost);
+      }
 
       return await prisma.reliveCreation.update({
         where: { requestId },

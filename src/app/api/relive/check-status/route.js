@@ -17,7 +17,10 @@ export async function GET(req) {
       return NextResponse.json({ error: "requestId query parameter is required." }, { status: 400 });
     }
 
-    const updatedCreation = await checkAndUpdateStatus(requestId);
+    const headerApiKey = req.headers.get("x-custom-api-key");
+    const customApiKey = headerApiKey || session.user.customApiKey || null;
+
+    const updatedCreation = await checkAndUpdateStatus(requestId, customApiKey);
     if (!updatedCreation) {
       return NextResponse.json({ error: "Creation not found." }, { status: 404 });
     }

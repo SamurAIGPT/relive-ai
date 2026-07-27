@@ -11,6 +11,9 @@ export async function GET(req) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const headerApiKey = req.headers.get("x-custom-api-key");
+    const customApiKey = headerApiKey || session.user.customApiKey || null;
+
     // 1. Fetch processing creations first to sync them
     const processingCreations = await prisma.reliveCreation.findMany({
       where: {
@@ -23,7 +26,7 @@ export async function GET(req) {
     if (processingCreations.length > 0) {
       try {
         await Promise.all(
-          processingCreations.map((c) => checkAndUpdateStatus(c.requestId))
+          processingCreations.map((c) => checkAndUpdateStatus(c.requestId, customApiKey))
         );
       } catch (err) {
         console.error("[CREATIONS GET API] Error in robust polling fallback:", err);
